@@ -1,0 +1,7 @@
+uvicorn
+fastapi
+motor
+python-jose
+python-multipart
+openai
+tiktoken

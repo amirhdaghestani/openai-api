@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  openai-api-app:
+    build: .
+    image: openai-api
+    env_file:
+      - openai-api.env
+    ports:
+      - '5000:5000'
+    depends_on:
+      - mongodb
+    volumes:
+      - .:/app
+    networks:
+      - openai-api-network
+
+  mongodb:
+    image: mongo:6-jammy
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongodbpath:/data/db
+    networks:
+      - openai-api-network
+
+volumes:
+  mongodbpath:
+
+networks:
+  openai-api-network:
+    driver: bridge
