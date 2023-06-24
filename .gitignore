@@ -1,5 +1,10 @@
 # Custom
+/data/db
+
 app_admin.py
+openai-api.env
+mongodb.env
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

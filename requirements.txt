@@ -4,4 +4,5 @@ motor
 python-jose
 python-multipart
 openai
+python-json-logger
 tiktoken

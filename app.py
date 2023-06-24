@@ -342,5 +342,4 @@ async def list_fine_tunes(user_info: str=Depends(auth_service.api_key_auth)):
 
 
 if __name__ == "__main__":
-   uvicorn.run("app:app", host="127.0.0.1", port=service_config.port,
-               reload=True)
+   uvicorn.run("app:app", host=service_config.host, port=service_config.port)

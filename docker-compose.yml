@@ -1,13 +1,12 @@
-version: '3.8'
+version: '3.3'
 
 services:
   openai-api-app:
     build: .
     image: openai-api
+    container_name: openai-api
     env_file:
       - openai-api.env
-    ports:
-      - '5000:5000'
     depends_on:
       - mongodb
     volumes:
@@ -17,15 +16,25 @@ services:
 
   mongodb:
     image: mongo:6-jammy
-    ports:
-      - '27017:27017'
+    container_name: mongocontainer
+    env_file:
+      - openai-api.env
     volumes:
-      - mongodbpath:/data/db
+      - ./data/db:/data/db
     networks:
       - openai-api-network
 
-volumes:
-  mongodbpath:
+  nginx:
+    image: nginx:latest
+    container_name: nginx
+    ports: 
+      - 5000:5000 
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf 
+    depends_on:
+      - openai-api-app
+    networks:
+      - openai-api-network
 
 networks:
   openai-api-network:
