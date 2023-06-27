@@ -14,6 +14,7 @@ from openai_services.openai_service import OpenAIService
 from authentication_services.authentication_service import AuthenticationService
 from utils.http_exceptions import limit_exception, forbidden_exception
 
+
 service_config = ServiceConfig()
 database_config = DatabaseConfig()
 database = DatabaseService(database_config=database_config)
@@ -74,7 +75,7 @@ async def update(user: UserUpdate):
     else:
         return await database.retrieve_user(user.user_id, 'user_id')
 
-@app.get("/admin/get/{user_id}", 
+@app.get("/admin/get/{user_id}",
          dependencies=[Depends(auth_service.validate_token)])
 async def get_user(user_id: str):
     """Get user in database
@@ -93,6 +94,22 @@ async def get_user(user_id: str):
     else:
         return result['data']
 
+@app.get("/admin/get",
+         dependencies=[Depends(auth_service.validate_token)])
+async def get_all_user():
+    """Get all users in database
+
+    Args:
+        None
+
+    Returns:
+        dict: result of user data in database.
+
+    """
+    result = await database.find_all_users()
+
+    return result
+
 @app.delete("/admin/delete/{user_id}", 
             dependencies=[Depends(auth_service.validate_token)])
 async def delete_user(user_id: str):
@@ -110,7 +127,30 @@ async def delete_user(user_id: str):
         raise HTTPException(status_code=result['status_code'],
                             detail=result['message'])
     else:
+        await database.delete_request_ts_record(user_id)
         return result['data']
+
+@app.get("/admin/get_record/{user_id}",
+         dependencies=[Depends(auth_service.validate_token)])
+async def get_record(user_id: str, endpoint: str, day_from: float,
+                     day_to: float=0.0, slice: str="hour"):
+    """Get ts record in database
+
+    Args:
+        user_id (str): ID of the user data.
+        endpoint (str): Endpoint to get the data for.
+        day_from (float): Start date to collect data.
+        day_to (float): End date to collect data.
+        slice (str): year, month, day, hour, minute, or second slice.
+
+    Returns:
+        list: result of ts data in database.
+
+    """
+    result = await database.get_ts_dates(user_id, endpoint=endpoint,
+                                         day_from=day_from, day_to=day_to,
+                                         slice=slice)
+    return result
 
 @app.get("/get")
 async def retrieve_user(user_info: str=Depends(auth_service.api_key_auth)):
@@ -148,6 +188,8 @@ async def completions(completions_args: Completions,
         openai_result = openai_service.completions(
             **completions_args.dict(exclude_unset=True))
         await database.update_request_limit(hashed_api_key=user_info['api_key'])
+        await database.add_request_ts_record(user_info['user_id'],
+                                             endpoint="completions")
     except Exception as exception:
         raise HTTPException(status_code=503, detail=str(exception))
     return openai_result
@@ -174,6 +216,8 @@ async def chat_completions(chat_completions_args: ChatCompletions,
         openai_result = openai_service.chat_completions(
             **chat_completions_args.dict(exclude_unset=True))
         await database.update_request_limit(hashed_api_key=user_info['api_key'])
+        await database.add_request_ts_record(user_info['user_id'],
+                                             endpoint="chat_completions")
     except Exception as exception:
         raise HTTPException(status_code=503, detail=str(exception))
     return openai_result
@@ -200,6 +244,8 @@ async def embeddings(embeddings_args: Embeddings,
         openai_result = openai_service.embeddings(
             **embeddings_args.dict(exclude_unset=True))
         await database.update_request_limit(hashed_api_key=user_info['api_key'])
+        await database.add_request_ts_record(user_info['user_id'],
+                                             endpoint="embeddings")
     except Exception as exception:
         raise HTTPException(status_code=503, detail=str(exception))
     return openai_result
@@ -272,6 +318,8 @@ async def fine_tunes(fine_tunes_args: FineTunes,
         openai_result = openai_service.fine_tunes(
             **fine_tunes_args.dict(exclude_unset=True))
         await database.update_finetune_limit(hashed_api_key=user_info['api_key'])
+        await database.add_request_ts_record(user_info['user_id'],
+                                             endpoint="fine_tunes")
     except Exception as exception:
         raise HTTPException(status_code=503, detail=str(exception))
     return openai_result
@@ -315,6 +363,9 @@ async def cancel_fine_tune(fine_tune_id: str,
     try:
         openai_result = openai_service.cancel_fine_tune(fine_tune_id)
         await database.update_finetune_limit(hashed_api_key=user_info['api_key'],
+                                             cost=-1)
+        await database.add_request_ts_record(user_id=user_info['user_id'],
+                                             endpoint="fine_tunes",
                                              cost=-1)
     except Exception as exception:
         raise HTTPException(status_code=503, detail=str(exception))

@@ -1,5 +1,11 @@
 """This module handles operations of database"""
+import datetime
+import nest_asyncio
+nest_asyncio.apply()
+import asyncio
+
 import motor.motor_asyncio
+from pymongo.errors import CollectionInvalid
 
 from logger.ve_logger import VeLogger
 from configs.database_config import DatabaseConfig, User
@@ -40,6 +46,7 @@ class DatabaseService:
         self.db_name = database_config.db_name
         self.db_user_collection = database_config.db_user_collection
         self.db_admin_collection = database_config.db_admin_collection
+        self.db_ts_collection = database_config.db_ts_collection
         self.db = self.client[self.db_name]
         self.user_collection = self.db.get_collection(
             self.db_user_collection
@@ -47,6 +54,25 @@ class DatabaseService:
         self.admin_collection = self.db.get_collection(
             self.db_admin_collection
         )
+        asyncio.run(self._create_ts_collection(self.db_ts_collection))
+        self.ts_collection = self.db.get_collection(
+            self.db_ts_collection
+        )
+
+    async def _create_ts_collection(self, collection_name):
+        """Create a time-series collection."""
+        try:
+            await self.db.create_collection(
+                collection_name,
+                timeseries = {
+                    "timeField": "timestamp",
+                    "metaField": "metadata",
+                    "granularity": "seconds"
+                },
+                expireAfterSeconds=5184000
+            )
+        except CollectionInvalid as exception:
+            self.logger.warning(f"Creating time series with {exception}")
 
     async def _get_doc(self, collection, dict_find: dict):
         """Check if value for key already exists in the database or not"""
@@ -276,3 +302,106 @@ class DatabaseService:
                 "data": check_exists,
                 "acknowledged": True,
                 "status_code": 200}
+
+    async def _add_time_series(self, collection, user_id: str, endpoint: str,
+                               cost: int):
+        """Insert time-series"""
+        result = await collection.insert_one({
+                "metadata": { "user_id": user_id, "endpoint": endpoint },
+                "timestamp": datetime.datetime.now(),
+                "request": cost
+            }
+        )
+        return {"message": "Record has been added.",
+                "acknowledged": result.acknowledged,
+                "status_code": 200}
+
+    async def _delete_time_series(self, collection, user_id: str):
+        """Delete time-series"""
+        result = await collection.delete_many({
+            "metadata.user_id": user_id
+        })
+        return {"message": "Record has been added.",
+                "acknowledged": result.acknowledged,
+                "status_code": 200}
+
+    async def delete_request_ts_record(self, user_id: str):
+        """Delete time-series"""
+        return await self._delete_time_series(collection=self.ts_collection,
+                                              user_id=user_id)
+
+    async def add_request_ts_record(self, user_id: str, endpoint: str,
+                                    cost: int=1):
+        """Add time series record"""
+        return await self._add_time_series(collection=self.ts_collection,
+                                           user_id=user_id,
+                                           endpoint=endpoint,
+                                           cost=cost)
+
+    async def get_ts_dates(self, user_id: str, endpoint: str, day_from: float,
+                           day_to: float=None, slice: str="hour"):
+        """Get results of ts between two dates"""
+        delta_from = datetime.datetime.now() - datetime.timedelta(days=day_from)
+        match_filter_dict =  {"$gte":delta_from}
+
+        if day_to:
+            delta_to = datetime.datetime.now() - datetime.timedelta(days=day_to)
+            match_filter_dict =  {**match_filter_dict, "$lte":delta_to}
+
+        date_limiter = {
+            "year": {"year": "$date.year"},
+            "month": {"year": "$date.year", "month": "$date.month"},
+            "day": {"year": "$date.year", "month": "$date.month",
+                    "day": "$date.day"},
+            "hour": {"year": "$date.year", "month": "$date.month",
+                     "day": "$date.day", "hour": "$date.hour"},
+            "minute": {"year": "$date.year", "month": "$date.month",
+                     "day": "$date.day", "hour": "$date.hour",
+                     "minute": "$date.minute"},
+            "second": {"year": "$date.year", "month": "$date.month",
+                     "day": "$date.day", "hour": "$date.hour",
+                     "minute": "$date.minute", "second": "$date.second"}
+        }
+
+        pipeline = [
+            {
+                "$match": {
+                    "timestamp": match_filter_dict,
+                    "metadata.user_id": user_id,
+                    "metadata.endpoint": endpoint
+                }
+            },
+            {
+                "$project": {
+                    "date": {
+                        "$dateToParts": { "date": "$timestamp" }
+                    },
+                    "request": "$request"
+                }
+            },
+            {
+                "$group": {
+                    "_id": {
+                        "date": date_limiter[slice]
+                    },
+                    "sum_request": { "$sum": "$request" }
+                }
+            }
+        ]
+
+        dataset = self.ts_collection.aggregate(pipeline)
+        return await dataset.to_list(length=None)
+
+    async def find_all_property(self, collection, key: str):
+        """Find all properties in a collection"""
+        dataset = collection.find({}, {key:1})
+        return await dataset.to_list(length=None)
+
+    async def find_all_users(self):
+        """Find all users in the users collection"""
+        user_list = await self.find_all_property(self.user_collection, "user_id")
+        user_id_list = []
+        for user in user_list:
+            user_id_list.append(user['user_id'])
+
+        return user_id_list

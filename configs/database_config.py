@@ -23,10 +23,13 @@ class DatabaseConfig:
                          if os.getenv("DB_USER_COLLECYION") else "Users"
     db_admin_collection = str(os.getenv("DB_ADMIN_COLLECTION")) \
                          if os.getenv("DB_ADMIN_COLLECYION") else "Admin"
+    db_ts_collection = str(os.getenv("DB_TS_COLLECTION")) \
+                       if os.getenv("DB_TS_COLLECYION") else "ts"
 
     def __init__(self, db_url: str=None, db_name: str=None,
-                 db_user_collection: str=None, 
-                 db_admin_collection: str=None) -> None:
+                 db_user_collection: str=None,
+                 db_admin_collection: str=None,
+                 db_ts_collection: str=None) -> None:
         if db_url:
             self.db_url = db_url
         if db_name:
@@ -35,6 +38,8 @@ class DatabaseConfig:
             self.db_user_collection = db_user_collection
         if db_admin_collection:
             self.db_admin_collection = db_admin_collection
+        if db_ts_collection:
+            self.db_ts_collection = db_ts_collection
 
 
 class PyObjectId(ObjectId):

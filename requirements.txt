@@ -4,5 +4,11 @@ motor
 python-jose
 python-multipart
 openai
+openai[datalib]
 python-json-logger
 tiktoken
+pywebio
+nest-asyncio
+python-dotenv
+python-dateutil
+pyecharts

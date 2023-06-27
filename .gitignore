@@ -1,9 +1,11 @@
 # Custom
 /data/db
+/.vscode
 
-app_admin.py
+*.env
 openai-api.env
 mongodb.env
+test.ipynb
 
 
 # Byte-compiled / optimized / DLL files

@@ -18,7 +18,7 @@ services:
     image: mongo:6-jammy
     container_name: mongocontainer
     env_file:
-      - openai-api.env
+      - mongodb.env
     volumes:
       - ./data/db:/data/db
     networks:
@@ -28,7 +28,8 @@ services:
     image: nginx:latest
     container_name: nginx
     ports: 
-      - 5000:5000 
+      - 5000:5000
+      - 5010:5010
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf 
     depends_on:
