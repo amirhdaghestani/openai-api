@@ -8,6 +8,8 @@ class AdminFronendConfig:
            if os.getenv("ADMIN_HOST") else "0.0.0.0"
     port = int(os.getenv("ADMIN_PORT")) \
            if os.getenv("ADMIN_PORT") else 5010
+    cdn = bool(os.getenv("ADMIN_CDN") != 'false') \
+          if os.getenv("ADMIN_CDN") else True
     token_url = str(os.getenv("ADMIN_TOKEN_URL")) \
                 if os.getenv("ADMIN_TOKEN_URL") else None
     add_user_url = str(os.getenv("ADMIN_ADD_USER_URL")) \
@@ -23,15 +25,17 @@ class AdminFronendConfig:
     request_timeout = int(os.getenv("ADMIN_REQUEST_TIMEOUT")) \
                       if os.getenv("ADMIN_REQUEST_TIMEOUT") else 10
 
-    def __init__(self, host: str=None, port: str=None, token_url: str=None,
-                 add_user_url: str=None, edit_user_url: str=None,
-                 delete_user_url: str=None, get_user_url: str=None,
-                 get_record_user_url: str=None,
+    def __init__(self, host: str=None, port: str=None, cdn: bool=None,
+                 token_url: str=None, add_user_url: str=None,
+                 edit_user_url: str=None, delete_user_url: str=None,
+                 get_user_url: str=None, get_record_user_url: str=None,
                  request_timeout: int=None) -> None:
         if host:
             self.host = host
         if port:
             self.port = port
+        if cdn:
+            self.cdn = cdn
         if token_url:
             self.token_url = token_url
         if add_user_url:

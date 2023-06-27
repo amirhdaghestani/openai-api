@@ -531,4 +531,5 @@ def get_slice(day_from, day_to):
         return "month"
 
 if __name__ == '__main__':
-    start_server(main, port=admin_frontend_config.port)
+    start_server(main, port=admin_frontend_config.port,
+                 cdn=admin_frontend_config.cdn)
