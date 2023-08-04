@@ -1,5 +1,6 @@
 """This module implements frontend for the admin control panel of API"""
 import json
+import re
 import datetime
 from dateutil.relativedelta import relativedelta
 
@@ -94,6 +95,11 @@ def db_init():
 
         if data['password'] != data['repeat_password']:
             toast("Password and Repeat Password must be the same.")
+            return
+
+        if not validate_password(data['password']):
+            toast("Password must be at least 8 characters and include at " \
+                  "least 1 uppercase letter, 1 lowercase letter, and one number")
             return
 
         user_data = convert_data(data)
@@ -236,6 +242,11 @@ def add_user():
             toast("Password and Repeat Password must be the same.")
             return
 
+        if not validate_password(data['password']):
+            toast("Password must be at least 8 characters and include at " \
+                  "least 1 uppercase letter, 1 lowercase letter, and one number")
+            return
+
         user_data = convert_data(data)
         results = admin_request.add_user(user_data)
         content = json.loads(results.content)
@@ -287,6 +298,11 @@ def change_password():
 
         if data['password'] != data['repeat_password']:
             toast("Password and Repeat Password must be the same.")
+            return
+
+        if not validate_password(data['password']):
+            toast("Password must be at least 8 characters and include at " \
+                  "least 1 uppercase letter, 1 lowercase letter, and one number")
             return
 
         data.pop('repeat_password')
@@ -489,7 +505,7 @@ def stat_user():
             pywebio.pin.pin_on_change('stat_user_id', onchange=on_change, clear=True)
 
     with use_scope('stat_date_select'):
-        date_options = ['1 hour', '24 hours', ('3 days', '3 days', True), '1 week',
+        date_options = ['1 hour', '24 hours', '3 days', ('1 week', '1 week', True),
                         '1 month', '3 months', '6 months']
         pywebio.pin.put_select(name='stat_date', help_text='Date Range',
                                options=date_options)
@@ -708,6 +724,25 @@ def get_slice(day_from, day_to):
         return "day"
     elif diff <= 365.0:
         return "month"
+
+def validate_password(password: str):
+    """Validate input password: must be at least 8 characters. 
+    must contain lower case, upper case, and bumbers. 
+    must not contain meta characters such as space.
+
+    """
+    if len(password) < 8:
+        return False
+    if not re.search(r"[a-z]", password):
+        return False
+    if not re.search(r"[A-Z]", password):
+        return False
+    if not re.search(r"[0-9]", password):
+        return False
+    if re.search(r"\s" , password):
+        return False
+
+    return True
 
 if __name__ == '__main__':
     start_server(main, port=admin_frontend_config.port,
