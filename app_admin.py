@@ -312,7 +312,10 @@ def change_password():
         if results.status_code != 200 and results.status_code != 201:
             remove('message_change_password')
             with use_scope('message_change_password'):
-                put_error(content['detail'])
+                if 'Incorrect username or password' in content:
+                    put_error("Password is incorrect.")
+                else:
+                    put_error(content['detail'])
         else:
             remove('message_change_password')
             with use_scope('message_change_password'):
