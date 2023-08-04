@@ -20,16 +20,20 @@ class AdminFronendConfig:
                       if os.getenv("ADMIN_DELETE_USER_URL") else None
     get_user_url = str(os.getenv("ADMIN_GET_USER_URL")) \
                    if os.getenv("ADMIN_GET_USER_URL") else None
+    init_url = str(os.getenv("ADMIN_INIT_URL")) \
+                   if os.getenv("ADMIN_INIT_URL") else None
     get_record_user_url = str(os.getenv("ADMIN_GET_RECORD_USER_URL")) \
                           if os.getenv("ADMIN_GET_RECORD_USER_URL") else None
     request_timeout = int(os.getenv("ADMIN_REQUEST_TIMEOUT")) \
                       if os.getenv("ADMIN_REQUEST_TIMEOUT") else 10
+    init_api_key = str(os.getenv("ADMIN_INIT_API_KEY")) \
+                   if os.getenv("ADMIN_INIT_API_KEY") else None
 
     def __init__(self, host: str=None, port: str=None, cdn: bool=None,
                  token_url: str=None, add_user_url: str=None,
                  edit_user_url: str=None, delete_user_url: str=None,
                  get_user_url: str=None, get_record_user_url: str=None,
-                 request_timeout: int=None) -> None:
+                 request_timeout: int=None, init_api_key: str=None) -> None:
         if host:
             self.host = host
         if port:
@@ -50,3 +54,5 @@ class AdminFronendConfig:
             self.get_record_user_url = get_record_user_url
         if request_timeout:
             self.request_timeout = request_timeout
+        if init_api_key:
+            self.init_api_key = init_api_key

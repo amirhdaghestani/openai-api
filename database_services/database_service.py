@@ -1,15 +1,41 @@
 """This module handles operations of database"""
+import asyncio
 import datetime
 import nest_asyncio
-nest_asyncio.apply()
-import asyncio
-
 import motor.motor_asyncio
 from pymongo.errors import CollectionInvalid
 
 from logger.ve_logger import VeLogger
-from configs.database_config import DatabaseConfig, User
+from configs.database_config import DatabaseConfig
 from utils.database_utils import generate_api_key, hash_api_key
+from schema.schema import User
+
+
+nest_asyncio.apply()
+
+
+CHAT_ENDPOINT = [
+    "chat_completions",
+    "completions",
+    "embeddings",
+    "finetunes"
+]
+
+
+DATE_LIMITER = {
+    "year": {"year": "$date.year"},
+    "month": {"year": "$date.year", "month": "$date.month"},
+    "day": {"year": "$date.year", "month": "$date.month",
+            "day": "$date.day"},
+    "hour": {"year": "$date.year", "month": "$date.month",
+                "day": "$date.day", "hour": "$date.hour"},
+    "minute": {"year": "$date.year", "month": "$date.month",
+                "day": "$date.day", "hour": "$date.hour",
+                "minute": "$date.minute"},
+    "second": {"year": "$date.year", "month": "$date.month",
+                "day": "$date.day", "hour": "$date.hour",
+                "minute": "$date.minute", "second": "$date.second"}
+}
 
 
 class DatabaseService:
@@ -45,19 +71,23 @@ class DatabaseService:
             database_config.db_url)
         self.db_name = database_config.db_name
         self.db_user_collection = database_config.db_user_collection
-        self.db_admin_collection = database_config.db_admin_collection
         self.db_ts_collection = database_config.db_ts_collection
         self.db = self.client[self.db_name]
         self.user_collection = self.db.get_collection(
             self.db_user_collection
         )
-        self.admin_collection = self.db.get_collection(
-            self.db_admin_collection
-        )
         asyncio.run(self._create_ts_collection(self.db_ts_collection))
         self.ts_collection = self.db.get_collection(
             self.db_ts_collection
         )
+
+    async def _is_in_list_collections(self):
+        """List collections of database."""
+        list_collections_name = []
+        list_collections = list(await self.db.list_collections())
+        for list_collection in list_collections:
+            list_collections_name.append(list_collection['name'])
+        return self.db_user_collection in list_collections_name
 
     async def _create_ts_collection(self, collection_name):
         """Create a time-series collection."""
@@ -84,6 +114,13 @@ class DatabaseService:
         doc = await collection.update_one(
             dict_find,
             {"$set": dict_update})
+        return doc
+
+    async def _inc_doc(self, collection, dict_find: dict, dict_update: dict):
+        """Update if value for key already exists in the database or not"""
+        doc = await collection.update_one(
+            dict_find,
+            {"$inc": dict_update})
         return doc
 
     async def _add_doc(self, collection, dict_add: dict):
@@ -127,18 +164,19 @@ class DatabaseService:
     async def update_limit(self, hashed_api_key: str, limit_key: str,
                            cost: int):
         """Update request limit"""
-        doc = await self._get_doc(self.user_collection,
-                                  {"api_key": hashed_api_key})
-        request_limit = int(doc[limit_key])
-        result = await self._update_doc(
+        result = await self._inc_doc(
             self.user_collection,
             {"api_key": hashed_api_key},
-            {limit_key: request_limit - cost}
+            {limit_key: -1 * cost}
         )
-        return {"message": "Limit has been updated. "\
-                          f"Limit: {doc[limit_key]}",
-                "acknowledged": result.acknowledged,
-                "status_code": 200}
+        if result.acknowledged:
+            return {"message": "Limit has been updated.",
+                    "acknowledged": result.acknowledged,
+                    "status_code": 200}
+        else:
+            return {"message": "Limit couldn't be updated.",
+                    "acknowledged": result.acknowledged,
+                    "status_code": 304}
 
     async def update_request_limit(self, hashed_api_key: str, cost: int=1):
         """Check request limit"""
@@ -169,8 +207,8 @@ class DatabaseService:
     async def verify_admin(self, username: str, password: str):
         """Verify API key."""
         hashed_password = hash_api_key(password)
-        doc = await self._get_doc(self.admin_collection,
-                                  {'username': username})
+        doc = await self._get_doc(self.user_collection,
+                                  {'user_id': username})
 
         if bool(doc) and doc['password'] == hashed_password:
             doc['acknowledged'] = True
@@ -201,9 +239,11 @@ class DatabaseService:
 
         api_key = generate_api_key(user.user_id)
         hashed_api_key = hash_api_key(api_key)
+        hashed_password = hash_api_key(user.password)
 
         user_dict = user.dict()
         user_dict['api_key'] = hashed_api_key
+        user_dict['password'] = hashed_password
 
         result = await self._add_doc(self.user_collection, user_dict)
 
@@ -224,9 +264,12 @@ class DatabaseService:
 
         """
         # Check arguments
+        user_dict = user.dict(exclude_unset=True)
+        if 'password' in user_dict.keys():
+            user_dict['password'] = hash_api_key(user_dict['password'])
         check_exists = await self._update_doc(self.user_collection,
                                               {'user_id': user.user_id},
-                                              user.dict(exclude_unset=True))
+                                              user_dict)
         if check_exists.matched_count == 0 and check_exists.modified_count == 0:
             return {"message": "User does not exists.",
                     "acknowledged": False,
@@ -262,6 +305,7 @@ class DatabaseService:
 
         check_exists.pop('_id')
         check_exists.pop('api_key')
+        check_exists.pop('password')
 
         return {"message": "User found.",
                 "data": check_exists,
@@ -341,27 +385,22 @@ class DatabaseService:
     async def get_ts_dates(self, user_id: str, endpoint: str, day_from: float,
                            day_to: float=None, slice: str="hour"):
         """Get results of ts between two dates"""
+        if endpoint not in CHAT_ENDPOINT:
+            return {"message": "Choose endpoint from valid values.",
+                    "acknowledged": False,
+                    "status_code": 429}
+
+        if slice not in DATE_LIMITER.keys():
+            return {"message": "Choose slice from valid values.",
+                    "acknowledged": False,
+                    "status_code": 429}
+
         delta_from = datetime.datetime.now() - datetime.timedelta(days=day_from)
         match_filter_dict =  {"$gte":delta_from}
 
         if day_to:
             delta_to = datetime.datetime.now() - datetime.timedelta(days=day_to)
             match_filter_dict =  {**match_filter_dict, "$lte":delta_to}
-
-        date_limiter = {
-            "year": {"year": "$date.year"},
-            "month": {"year": "$date.year", "month": "$date.month"},
-            "day": {"year": "$date.year", "month": "$date.month",
-                    "day": "$date.day"},
-            "hour": {"year": "$date.year", "month": "$date.month",
-                     "day": "$date.day", "hour": "$date.hour"},
-            "minute": {"year": "$date.year", "month": "$date.month",
-                     "day": "$date.day", "hour": "$date.hour",
-                     "minute": "$date.minute"},
-            "second": {"year": "$date.year", "month": "$date.month",
-                     "day": "$date.day", "hour": "$date.hour",
-                     "minute": "$date.minute", "second": "$date.second"}
-        }
 
         pipeline = [
             {
@@ -382,7 +421,7 @@ class DatabaseService:
             {
                 "$group": {
                     "_id": {
-                        "date": date_limiter[slice]
+                        "date": DATE_LIMITER[slice]
                     },
                     "sum_request": { "$sum": "$request" }
                 }
@@ -390,7 +429,12 @@ class DatabaseService:
         ]
 
         dataset = self.ts_collection.aggregate(pipeline)
-        return await dataset.to_list(length=None)
+        records = await dataset.to_list(length=None)
+
+        return {"message": "Success.",
+                "acknowledged": True,
+                "data": records,
+                "status_code": 200}
 
     async def find_all_property(self, collection, key: str):
         """Find all properties in a collection"""
@@ -405,3 +449,22 @@ class DatabaseService:
             user_id_list.append(user['user_id'])
 
         return user_id_list
+
+    async def is_init(self):
+        """Check if db is initialized"""
+        return await self._is_in_list_collections()
+
+    async def init(self, user: User):
+        """Initialize database"""
+        if await self.is_init():
+            return {"message": "Database is already initialized.",
+                    "acknowledged": False,
+                    "status_code": 400}
+        if user.privilege != "owner":
+            return {"message": "For initialization, User must be of privilege 'owner'.",
+                    "acknowledged": False,
+                    "status_code": 400}
+        add_new_user = await self.add_new_user(user=user)
+        if add_new_user['acknowledged']:
+            self.is_db_init = True
+        return add_new_user

@@ -1,5 +1,6 @@
 """This module handles authentication."""
 from datetime import datetime
+import json
 
 from fastapi.security.api_key import APIKeyHeader
 from fastapi.security import OAuth2PasswordBearer
@@ -18,17 +19,19 @@ class AuthenticationService:
     # Initialize logger
     ve_logger = VeLogger()
 
-    api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
+    api_key_header = APIKeyHeader(name="Authorization", auto_error=False,
+                                  scheme_name="API Key")
+    init_token_header = APIKeyHeader(name="Authorization", auto_error=False,
+                                     scheme_name="Init API Key")
 
     oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/admin/token",
                                          scheme_name="JWT")
 
-
-    def __init__(self, database_service) -> None:
+    def __init__(self, database_service, auth_config: AuthenticationConfig) -> None:
         """Initializer of class"""
         self.database = database_service
 
-        self.auth_config = AuthenticationConfig()
+        self.auth_config = auth_config
 
     def _get_api_key(self, authorization: str):
         """Get the API key"""
@@ -51,6 +54,22 @@ class AuthenticationService:
                                 detail=result['message'])
         else:
             result.pop('acknowledged')
+            result.pop('password')
+            return result
+
+    async def init_key_auth(self, init_token: str=Security(init_token_header)):
+        """Validate API key provided
+
+        Args:
+            api_key: API key provided in the header.
+
+        """
+        init_token = self._get_api_key(init_token)
+        result = init_token == self.auth_config.initialization_token
+        if result is False:
+            raise HTTPException(status_code=401,
+                                detail="Init token is not valid.")
+        else:
             return result
 
     async def validate_token(self, token: str=Security(oauth2_scheme)):
@@ -67,7 +86,10 @@ class AuthenticationService:
                     detail="Token expired",
                     headers={"WWW-Authenticate": "Bearer"},
                 )
-
+            for key, value in payload.items():
+                if isinstance(value, str):
+                    payload[key] = eval(value)
+            return payload
         except(jwt.JWTError, ValidationError):
             raise HTTPException(
                 status_code=403,

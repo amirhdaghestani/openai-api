@@ -1,6 +1,8 @@
 # Custom
 /data/db
 /.vscode
+/docs
+/test
 
 *.env
 openai-api.env

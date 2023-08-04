@@ -4,16 +4,16 @@ import datetime
 from dateutil.relativedelta import relativedelta
 
 from pywebio import start_server
-from pywebio.session import set_env
+from pywebio.session import set_env, run_js
 from pywebio.input import input_group, input, NUMBER, PASSWORD
 from pywebio.output import (put_error, use_scope, put_scope, remove,
                             put_buttons, put_tabs, toast, put_success,
                             put_image, put_grid, span, put_markdown, put_html,
-                            put_column, put_table)
+                            put_column, put_table, popup)
 import pywebio.pin
 
 import pyecharts.options as opts
-from pyecharts.charts import Bar
+from pyecharts.charts import Line
 from pyecharts.components import Table
 from pyecharts.options import ComponentTitleOpts
 
@@ -21,8 +21,25 @@ from configs.admin_frontend_config import AdminFronendConfig
 from admin_frontend_services.admin_request import AdminRequest
 
 
+ADMIN_PRIVILEGE = ["owner", "admin"]
+LIST_PRIVILEGE = ["user", "admin"]
+ENDPOINT_LIST = ['chat_completions',
+                 'completions', 
+                 'embeddings', 
+                 'fine_tunes']
+
+
 admin_frontend_config = AdminFronendConfig()
 admin_request = AdminRequest(admin_frontend_config)
+
+def init():
+    """Initialize SDK"""
+    global admin_frontend_config
+    admin_frontend_config = AdminFronendConfig()
+    global admin_request
+    admin_request = AdminRequest(admin_frontend_config)
+    admin_request.is_db_init()
+
 
 # @config(theme='dark')
 def main():
@@ -31,10 +48,83 @@ def main():
     put_image(open('resources/admin_logo.png',
                    'rb').read(), width="50%", 
                    height="50%").style('display: block; margin: auto;')
+    init()
+
+    # if admin_request.is_init:
+    #     login()
+    # else:
+    #     db_init()
+    #     return
+
     login()
     remove('login')
     select_tools()
 
+@use_scope('db_init')
+def db_init():
+    """Add user"""
+    def convert_data(data):
+        permissions = {
+            "text_completion_models": False,
+            "chat_completion_models": False,
+            "embeddings": False,
+            "fine_tune": False
+        }
+        for permission in data['permissions']:
+            permissions[permission] = True
+        data['permissions'] = permissions
+        data.pop("repeat_password")
+        return data
+
+    def query_submition():
+        data = {}
+        data['user_id'] = pywebio.pin.pin['init_user_id']
+        data['name'] = pywebio.pin.pin['init_name']
+        data['password'] = pywebio.pin.pin['init_password']
+        data['repeat_password'] = pywebio.pin.pin['init_repeat_password']
+        data['request_limit'] = 0
+        data['fine_tune_limit'] = 0
+        data['privilege'] = "owner"
+        data['permissions'] = []
+
+        for key, value in data.items():
+            if key not in ['permissions'] and (value is None or value == ''):
+                toast("Fill required fields.")
+                return
+
+        if data['password'] != data['repeat_password']:
+            toast("Password and Repeat Password must be the same.")
+            return
+
+        user_data = convert_data(data)
+        results = admin_request.db_init(user_data)
+        content = json.loads(results.content)
+
+        if results.status_code != 200 and results.status_code != 201:
+            remove('message_init_user')
+            with use_scope('message_init_user'):
+                put_error(content['detail'])
+        else:
+            remove('message_init_user')
+            with use_scope('message_init_user'):
+                put_success("User successfully created. Your API key is:\n" + content['detail'] + \
+                    "\n*WARNING* This key is not recoverable. " \
+                    "Please write it down and keep it somewhere safe.")
+
+
+    put_tabs([
+        {'title':'Initialize', 'content':put_scope('init_user_form')}
+    ])
+    with use_scope("init_user_form"):
+        pywebio.pin.put_input(label='User ID', name='init_user_id')
+        pywebio.pin.put_input(label='Name', name='init_name')
+        pywebio.pin.put_input(label='Password', name='init_password', type=PASSWORD)
+        pywebio.pin.put_input(label='Repeat Password', name='init_repeat_password', type=PASSWORD)
+
+        put_buttons([
+            {'label':'Submit', 'value':'submit', 'color':'primary'},
+            {'label':'Refresh', 'value':'back', 'color':'secondary'}
+        ], onclick=[query_submition, logout_button]).style('text-align:left;')
 
 @use_scope('login')
 def login():
@@ -56,21 +146,32 @@ def login():
             remove('message_error_login')
             return result
 
-
 @use_scope('select_tools', clear=True)
 def select_tools():
     """Select tools"""
-    put_tabs([
-        dict(title='Select Tools', content=[
-            put_buttons(buttons=[
-                dict(label="Add User", value="add_user"),
-                dict(label="Update User", value="update_user", color="warning"),
-                dict(label="User Statistics", value="stat_user", color="success"),
-                dict(label="Delete User", value="delete_user", color="danger")
-                ], onclick=show_tools).style('text-align:center;')
+    if admin_request.user_info['privilege'] in ADMIN_PRIVILEGE:
+        put_tabs([
+            dict(title='Select Tools', content=[
+                put_buttons(buttons=[
+                    dict(label="Add User", value="add_user"),
+                    dict(label="Update User", value="update_user", color="warning"),
+                    dict(label="User Statistics", value="stat_user", color="success"),
+                    dict(label="Delete User", value="delete_user", color="danger"),
+                    dict(label="Change Password", value="change_password", color="dark"),
+                    dict(label="Logout", value="logout", color="secondary")
+                    ], onclick=show_tools).style('text-align:center;')
+            ])
         ])
-    ])
-
+    else:
+        put_tabs([
+            dict(title='Select Tools', content=[
+                put_buttons(buttons=[
+                    dict(label="User Statistics", value="stat_user", color="success"),
+                    dict(label="Change Password", value="change_password", color="dark"),
+                    dict(label="Logout", value="logout", color="secondary")
+                    ], onclick=show_tools).style('text-align:center;')
+            ])
+        ])
 
 @use_scope('show_tools')
 def show_tools(input):
@@ -89,6 +190,12 @@ def show_tools(input):
     if input == 'delete_user':
         delete_user()
 
+    if input == 'change_password':
+        change_password()
+
+    if input == 'logout':
+        logout_button()
+
 @use_scope('add_user')
 def add_user():
     """Add user"""
@@ -102,14 +209,18 @@ def add_user():
         for permission in data['permissions']:
             permissions[permission] = True
         data['permissions'] = permissions
+        data.pop("repeat_password")
         return data
 
     def query_submition():
         data = {}
         data['user_id'] = pywebio.pin.pin['add_user_id']
         data['name'] = pywebio.pin.pin['add_name']
+        data['password'] = pywebio.pin.pin['add_password']
+        data['repeat_password'] = pywebio.pin.pin['add_repeat_password']
         data['request_limit'] = pywebio.pin.pin['add_request_limit']
         data['fine_tune_limit'] = pywebio.pin.pin['add_fine_tune_limit']
+        data['privilege'] = pywebio.pin.pin['add_privilege']
         data['permissions'] = pywebio.pin.pin['add_permissions']
 
         for key, value in data.items():
@@ -120,6 +231,10 @@ def add_user():
             if key in ['permissions'] and len(value) == 0:
                 toast("At least one permission must be selected.")
                 return
+
+        if data['password'] != data['repeat_password']:
+            toast("Password and Repeat Password must be the same.")
+            return
 
         user_data = convert_data(data)
         results = admin_request.add_user(user_data)
@@ -143,8 +258,12 @@ def add_user():
     with use_scope("add_user_form"):
         pywebio.pin.put_input(label='User ID', name='add_user_id')
         pywebio.pin.put_input(label='Name', name='add_name')
+        pywebio.pin.put_input(label='Password', name='add_password', type=PASSWORD)
+        pywebio.pin.put_input(label='Repeat Password', name='add_repeat_password', type=PASSWORD)
         pywebio.pin.put_input(label='Request Limit', name='add_request_limit', type=NUMBER)
         pywebio.pin.put_input(label='Fine-Tune Limit', name='add_fine_tune_limit', type=NUMBER)
+        pywebio.pin.put_select(label='User Privilege', name='add_privilege',
+                               options=LIST_PRIVILEGE)
         pywebio.pin.put_checkbox(label="Permissions", name='add_permissions', options=[
             dict(label="Text Completion Models", value="text_completion_models"),
             dict(label="Chat Completion Models", value="chat_completion_models"),
@@ -157,6 +276,50 @@ def add_user():
             {'label':'Back', 'value':'back', 'color':'secondary'}
         ], onclick=[query_submition, back_button]).style('text-align:left;')
 
+@use_scope('change_password')
+def change_password():
+    """Change the password"""
+    def query_submition():
+        data = {}
+        data['old_password'] = pywebio.pin.pin['change_password_old_password']
+        data['password'] = pywebio.pin.pin['change_password_new_password']
+        data['repeat_password'] = pywebio.pin.pin['change_password_repeat_new_password']
+
+        if data['password'] != data['repeat_password']:
+            toast("Password and Repeat Password must be the same.")
+            return
+
+        data.pop('repeat_password')
+        results = admin_request.change_password(data=data)
+        content = json.loads(results.content)
+
+        if results.status_code != 200 and results.status_code != 201:
+            remove('message_change_password')
+            with use_scope('message_change_password'):
+                put_error(content['detail'])
+        else:
+            remove('message_change_password')
+            with use_scope('message_change_password'):
+                popup("Change Password", "User succesfully updated password.")
+            back_button()
+    put_tabs([
+        {'title':'Change Password', 'content':put_scope('change_password_form')}
+    ])
+    with use_scope("change_password_form"):
+        pywebio.pin.put_input(label='Current Password',
+                              name='change_password_old_password',
+                              type=PASSWORD)
+        pywebio.pin.put_input(label='New Password',
+                              name='change_password_new_password',
+                              type=PASSWORD)
+        pywebio.pin.put_input(label='Repeat New Password',
+                              name='change_password_repeat_new_password',
+                              type=PASSWORD)
+
+        put_buttons([
+            {'label':'Submit', 'value':'submit', 'color':'primary'},
+            {'label':'Back', 'value':'back', 'color':'secondary'}
+        ], onclick=[query_submition, back_button]).style('text-align:left;')
 
 @use_scope('update_user')
 def update_user():
@@ -227,11 +390,11 @@ def update_user():
         all_users = get_all_user()
         put_tabs([
             {'title':'Update User', 'content': [
-                pywebio.pin.put_select(label='User ID', name='update_user_search', 
+                pywebio.pin.put_select(label='User ID', name='update_user_search',
                                        options=all_users),
                 put_buttons([
                     {'label':'Submit', 'value':'submit', 'color':'primary'},
-                    {'label':'Back', 'value':'back', 'color':'secondary'}], 
+                    {'label':'Back', 'value':'back', 'color':'secondary'}],
                     onclick=[user_search_submission, back_button]).style('text-align:left;')
             ]}])
 
@@ -247,8 +410,8 @@ def update_user():
                                   value=content['name'])
             pywebio.pin.put_input(label='Request Limit', name='update_request_limit',
                                   type=NUMBER, value=content['request_limit'])
-            pywebio.pin.put_input(label='Fine-Tune Limit', name='update_fine_tune_limit', type=NUMBER,
-                                  value=content['fine_tune_limit'])
+            pywebio.pin.put_input(label='Fine-Tune Limit', name='update_fine_tune_limit',
+                                  type=NUMBER, value=content['fine_tune_limit'])
             pywebio.pin.put_checkbox(label="Permissions", name='update_permissions', options=[
                 dict(label="Text Completion Models", value="text_completion_models"),
                 dict(label="Chat Completion Models", value="chat_completion_models"),
@@ -308,35 +471,43 @@ def stat_user():
         [span(put_markdown('## User information'), col=3)],
         [span(put_scope('stat_user_information'), col=4)],
         [span(put_markdown('## Charts'), col=2, row=1), None, put_markdown('## Aggregate ')],
-        [span(put_column([put_scope('stat_endpoint_select'), 
+        [span(put_column([put_scope('stat_endpoint_select'),
                           put_scope('stat_charts')],size="15%"), col=2, row=1),
                           None, put_scope('stat_aggregation')]
     ], cell_widths='33% 30% 3% 33%')
 
     with use_scope('stat_user_select'):
-        all_user = get_all_user()
-        pywebio.pin.put_select(name='stat_user_id', help_text='User ID',
-                               options=all_user)
-        pywebio.pin.pin_on_change('stat_user_id', onchange=on_change, clear=True)
+        if admin_request.user_info['privilege'] in ADMIN_PRIVILEGE:
+            all_user = get_all_user()
+            pywebio.pin.put_select(name='stat_user_id', help_text='User ID',
+                                   options=all_user)
+            pywebio.pin.pin_on_change('stat_user_id', onchange=on_change, clear=True)
+        else:
+            pywebio.pin.put_input(name='stat_user_id', help_text='User ID',
+                                  value=[admin_request.user_info['user_id']],
+                                  readonly=True)
+            pywebio.pin.pin_on_change('stat_user_id', onchange=on_change, clear=True)
 
     with use_scope('stat_date_select'):
-        date_options = ['1 hour', '24 hours', '3 days', '1 week', 
-                        ('1 month', '1 month', True), '3 months', '6 months']
+        date_options = ['1 hour', '24 hours', ('3 days', '3 days', True), '1 week',
+                        '1 month', '3 months', '6 months']
         pywebio.pin.put_select(name='stat_date', help_text='Date Range',
                                options=date_options)
         pywebio.pin.pin_on_change('stat_date', onchange=on_change, clear=True)
 
     with use_scope('stat_endpoint_select'):
         pywebio.pin.put_select(name='stat_endpoint', help_text='Endpoint',
-                               options=['completions',
-                                        'chat_completions', 
-                                        'embeddings', 'fine_tunes'])
+                               options=ENDPOINT_LIST)
         pywebio.pin.pin_on_change('stat_endpoint', onchange=on_change, clear=True,
                                   init_run=True)
 
     put_markdown("<br>")
+    # if admin_request.user_info['privilege'] in ADMIN_PRIVILEGE:
     put_buttons([{'label':'Back', 'value':'back', 'color':'secondary'}],
                 onclick=[back_button]).style('text-align:center;')
+    # else:
+    #     put_buttons([{'label':'Logout', 'value':'back', 'color':'secondary'}],
+    #                 onclick=[logout_button]).style('text-align:center;')
 
 
 @use_scope('delete_user')
@@ -362,13 +533,12 @@ def delete_user():
             pywebio.pin.put_input(label='User ID', name='delete_user_search'),
             put_buttons([
                 {'label':'Submit', 'value':'submit', 'color':'primary'},
-                {'label':'Back', 'value':'back', 'color':'secondary'}], 
+                {'label':'Back', 'value':'back', 'color':'secondary'}],
                 onclick=[user_search_submission, back_button]).style('text-align:left;')
         ]}])
 
-
-def back_button():
-    """Back button"""
+def remove_scopes():
+    """Remove scopes"""
     remove('select_tools')
     remove('show_tools')
 
@@ -385,6 +555,9 @@ def back_button():
     remove('delete_user')
     remove('message_delete_user')
 
+    remove('change_password')
+    remove('message_change_password')
+
     remove('stat_user')
     remove('stat_user_select')
     remove('stat_date_select')
@@ -393,8 +566,15 @@ def back_button():
     remove('stat_charts')
     remove('stat_aggregation')
 
+
+def back_button():
+    """Back button"""
+    remove_scopes()
     select_tools()
 
+def logout_button():
+    """Logout button"""
+    run_js('window.location.reload()')
 
 def get_all_user():
     """Get all users"""
@@ -402,11 +582,10 @@ def get_all_user():
 
     return json.loads(all_users.content)
 
-
 def plot_chart(x_data, y_data, title, bar_name):
     """Plot Bar charts"""
     plot = (
-        Bar()
+        Line()
         .add_xaxis(xaxis_data=x_data)
         .add_yaxis(
             series_name=bar_name, y_axis=y_data, label_opts=opts.LabelOpts(is_show=False)
@@ -416,7 +595,7 @@ def plot_chart(x_data, y_data, title, bar_name):
             xaxis_opts=opts.AxisOpts(splitline_opts=opts.SplitLineOpts(is_show=False)),
             yaxis_opts=opts.AxisOpts(
                 axistick_opts=opts.AxisTickOpts(is_show=True),
-                splitline_opts=opts.SplitLineOpts(is_show=True),
+                splitline_opts=opts.SplitLineOpts(is_show=False),
             ),
         )
     )
@@ -496,7 +675,7 @@ def generate_y_data(records, x_data: list, slice: str="hour"):
         return y_data
 
     if slice == "minute":
-        x_data_list = [{'year': e.year, 'month': e.month, 'day': e.day, 
+        x_data_list = [{'year': e.year, 'month': e.month, 'day': e.day,
                         'hour': e.hour, 'minute': e.minute} for e in x_data]
     elif slice == "hour":
         x_data_list = [{'year': e.year, 'month': e.month, 'day': e.day,
