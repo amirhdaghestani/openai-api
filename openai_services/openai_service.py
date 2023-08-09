@@ -42,7 +42,7 @@ class OpenAIService:
                 "enviroment variable `OPENAI_API_KEY` to your OpeAI API key.")
 
         openai.api_key = openai_config.openai_api_key
-        self.model_list = self._get_models(openai.Model.list())
+        # self.model_list = self._get_models(openai.Model.list())
 
     def _get_models(self, model_list_raw: list):
         """Get models

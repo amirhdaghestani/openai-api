@@ -1,7 +1,9 @@
 """This is the main module."""
 import uvicorn
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Body
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Body, Request
 from fastapi.security import OAuth2PasswordRequestForm
+from sse_starlette.sse import EventSourceResponse
+import json
 
 from configs.database_config import DatabaseConfig
 from configs.service_config import ServiceConfig
@@ -311,7 +313,7 @@ async def retrieve_user(user_info: str=Depends(auth_service.api_key_auth)):
     return user_info
 
 @app.post("/v1/completions")
-async def completions(completions_args: Completions,
+async def completions(completions_args: Completions, request: Request,
                       user_info: str=Depends(auth_service.api_key_auth)):
     """Get completions API
 
@@ -335,11 +337,26 @@ async def completions(completions_args: Completions,
         await database.add_request_ts_record(user_info['user_id'],
                                              endpoint="completions")
     except Exception as exception:
-        raise HTTPException(status_code=503, detail=str(exception))
+        raise HTTPException(status_code=exception.http_status,
+                            detail=str(exception)) from exception
+
+    async def event_generator(messages):
+        # If client closes connection, stop sending events
+        for message in messages:
+            if await request.is_disconnected():
+                break
+            # Checks for new messages and return them to client if any
+            if message:
+                yield {
+                    "data": json.dumps(message)
+                }
+
+    if completions_args.stream:
+        return EventSourceResponse(event_generator(openai_result))
     return openai_result
 
 @app.post("/v1/chat/completions")
-async def chat_completions(chat_completions_args: ChatCompletions,
+async def chat_completions(chat_completions_args: ChatCompletions, request: Request,
                            user_info: str=Depends(auth_service.api_key_auth)):
     """Get completions API
 
@@ -363,7 +380,23 @@ async def chat_completions(chat_completions_args: ChatCompletions,
         await database.add_request_ts_record(user_info['user_id'],
                                              endpoint="chat_completions")
     except Exception as exception:
-        raise HTTPException(status_code=503, detail=str(exception))
+        raise HTTPException(status_code=exception.http_status,
+                            detail=str(exception)) from exception
+
+    async def event_generator(messages):
+        # If client closes connection, stop sending events
+        for message in messages:
+            if await request.is_disconnected():
+                break
+
+            # Checks for new messages and return them to client if any
+            if message:
+                yield {
+                    "data": json.dumps(message)
+                }
+
+    if chat_completions_args.stream:
+        return EventSourceResponse(event_generator(openai_result))
     return openai_result
 
 @app.post("/v1/embeddings")
@@ -391,7 +424,8 @@ async def embeddings(embeddings_args: Embeddings,
         await database.add_request_ts_record(user_info['user_id'],
                                              endpoint="embeddings")
     except Exception as exception:
-        raise HTTPException(status_code=503, detail=str(exception))
+        raise HTTPException(status_code=exception.http_status,
+                            detail=str(exception)) from exception
     return openai_result
 
 @app.post("/v1/files")
@@ -417,7 +451,8 @@ async def upload_files(purpose: str=Body(..., embed=True),
         upload_files_dict['purpose'] = purpose
         openai_result = openai_service.upload_files(**upload_files_dict)
     except Exception as exception:
-        raise HTTPException(status_code=503, detail=str(exception))
+        raise HTTPException(status_code=exception.http_status,
+                            detail=str(exception)) from exception
     return openai_result
 
 @app.get("/v1/files")
@@ -437,7 +472,8 @@ async def list_files(user_info: str=Depends(auth_service.api_key_auth)):
     try:
         openai_result = openai_service.list_files()
     except Exception as exception:
-        raise HTTPException(status_code=503, detail=str(exception))
+        raise HTTPException(status_code=exception.http_status,
+                            detail=str(exception)) from exception
     return openai_result
 
 @app.post("/v1/fine-tunes")
@@ -465,7 +501,8 @@ async def fine_tunes(fine_tunes_args: FineTunes,
         await database.add_request_ts_record(user_info['user_id'],
                                              endpoint="fine_tunes")
     except Exception as exception:
-        raise HTTPException(status_code=503, detail=str(exception))
+        raise HTTPException(status_code=exception.http_status,
+                            detail=str(exception)) from exception
     return openai_result
 
 @app.get("/v1/fine-tunes/{fine_tune_id}")
@@ -486,7 +523,8 @@ async def retrieve_fine_tune(fine_tune_id: str,
     try:
         openai_result = openai_service.retrieve_fine_tune(fine_tune_id)
     except Exception as exception:
-        raise HTTPException(status_code=503, detail=str(exception))
+        raise HTTPException(status_code=exception.http_status,
+                            detail=str(exception)) from exception
     return openai_result
 
 @app.get("/v1/fine-tunes/{fine_tune_id}/cancel")
@@ -512,7 +550,8 @@ async def cancel_fine_tune(fine_tune_id: str,
                                              endpoint="fine_tunes",
                                              cost=-1)
     except Exception as exception:
-        raise HTTPException(status_code=503, detail=str(exception))
+        raise HTTPException(status_code=exception.http_status,
+                            detail=str(exception)) from exception
     return openai_result
 
 @app.get("/v1/fine-tunes")
@@ -532,7 +571,8 @@ async def list_fine_tunes(user_info: str=Depends(auth_service.api_key_auth)):
     try:
         openai_result = openai_service.list_fine_tunes()
     except Exception as exception:
-        raise HTTPException(status_code=503, detail=str(exception))
+        raise HTTPException(status_code=exception.http_status,
+                            detail=str(exception)) from exception
     return openai_result
 
 

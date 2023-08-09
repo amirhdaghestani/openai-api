@@ -12,3 +12,4 @@ nest-asyncio
 python-dotenv
 python-dateutil
 pyecharts
+sse_starlette
