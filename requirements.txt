@@ -13,3 +13,4 @@ python-dotenv
 python-dateutil
 pyecharts
 sse_starlette
+gunicorn
